@@ -81,9 +81,9 @@ func NewMinIOClient(cfg *config.Config) (*MinIOClient, error) {
 	}, nil
 }
 
-// GetMetrics fetches the metrics.json file from MinIO and returns it as a map
-func (m *MinIOClient) GetMetrics(ctx context.Context, bucket, path string) (map[string]interface{}, error) {
-	objectPath := fmt.Sprintf("%smetrics.json", path)
+// GetMetrics fetches the metrics file from MinIO and returns it as a map
+func (m *MinIOClient) GetMetrics(ctx context.Context, bucket, path, metricsFileName string) (map[string]interface{}, error) {
+	objectPath := fmt.Sprintf("%s%s", path, metricsFileName)
 	
 	obj, err := m.client.GetObject(ctx, bucket, objectPath, minio.GetObjectOptions{})
 	if err != nil {

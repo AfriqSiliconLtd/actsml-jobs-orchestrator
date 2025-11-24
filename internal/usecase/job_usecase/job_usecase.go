@@ -51,7 +51,8 @@ func (uc *JobUseCase) CreateJob(ctx context.Context, payload json.RawMessage) (*
 
 	// Generate unique job ID and name
 	jobID := uuid.New().String()
-	jobName := fmt.Sprintf("actsml-job-%s", jobID)
+	jobNamePrefix := uc.getJobNamePrefix()
+	jobName := fmt.Sprintf("%s%s", jobNamePrefix, jobID)
 
 	// Get namespace from config or use default
 	namespace := uc.getNamespace()
@@ -66,18 +67,21 @@ func (uc *JobUseCase) CreateJob(ctx context.Context, payload json.RawMessage) (*
 	payloadStr := string(payloadBytes)
 
 	// Create ConfigMap with payload (worker expects PAYLOAD_FILE pointing to a file)
-	configMapName := fmt.Sprintf("%s-payload", jobName)
+	configMapSuffix := uc.getConfigMapSuffix()
+	payloadFileName := uc.getPayloadFileName()
+	managedByLabel := uc.getManagedByLabel()
+	configMapName := fmt.Sprintf("%s%s", jobName, configMapSuffix)
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      configMapName,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"managed-by": "actsml-orchestrator",
+				"managed-by": managedByLabel,
 				"job-name":   jobName,
 			},
 		},
 		Data: map[string]string{
-			"payload.json": payloadStr,
+			payloadFileName: payloadStr,
 		},
 	}
 
@@ -89,9 +93,12 @@ func (uc *JobUseCase) CreateJob(ctx context.Context, payload json.RawMessage) (*
 	}
 
 	// Build environment variables for the worker
+	workspaceMountPath := uc.getWorkspaceMountPath()
+	// payloadFileName already declared above, reuse it
+	payloadFilePath := fmt.Sprintf("%s/%s", workspaceMountPath, payloadFileName)
 	envMap := map[string]string{
-		"PAYLOAD_FILE": "/workspace/payload.json", // Worker expects file path
-		// MinIO configuration (can be overridden via config in the future)
+		"PAYLOAD_FILE": payloadFilePath, // Worker expects file path
+		// MinIO configuration
 		"MINIO_ENDPOINT":  uc.getMinIOEndpoint(),
 		"MINIO_ACCESS_KEY": uc.getMinIOAccessKey(),
 		"MINIO_SECRET_KEY": uc.getMinIOSecretKey(),
@@ -108,9 +115,12 @@ func (uc *JobUseCase) CreateJob(ctx context.Context, payload json.RawMessage) (*
 	backoffLimit := uc.getBackoffLimit()
 	ttlSeconds := uc.getTTLSeconds()
 
+	// Build job builder config from orchestrator config
+	jobBuilderConfig := uc.getJobBuilderConfig()
+
 	// Build Kubernetes Job manifest with compute resources from payload
 	// Pass ConfigMap name for volume mounting
-	job := BuildK8sJob(jobName, workerImage, envMap, backoffLimit, namespace, &validatedPayload.Compute, imagePullSecretName, configMapName, ttlSeconds)
+	job := BuildK8sJob(jobName, workerImage, envMap, backoffLimit, namespace, &validatedPayload.Compute, imagePullSecretName, configMapName, ttlSeconds, jobBuilderConfig)
 	
 	// Add project and experiment labels for better tracking
 	if job.Labels == nil {
@@ -165,8 +175,16 @@ func (uc *JobUseCase) GetJobStatusWithResults(ctx context.Context, name string) 
 		return nil, entity.CreateError(entity.ErrBadRequest.Error(), "job name cannot be empty")
 	}
 
+	// Normalize job name - if it's just an ID, prepend the job name prefix
+	jobNamePrefix := uc.getJobNamePrefix()
+	jobName := name
+	if !strings.HasPrefix(name, jobNamePrefix) {
+		// If it doesn't start with the prefix, assume it's just an ID and prepend the prefix
+		jobName = fmt.Sprintf("%s%s", jobNamePrefix, name)
+	}
+
 	namespace := uc.getNamespace()
-	job, err := uc.k8s.GetJob(ctx, namespace, name)
+	job, err := uc.k8s.GetJob(ctx, namespace, jobName)
 	if err != nil {
 		uc.logger.Error(fmt.Errorf("failed to get job status: %w", err), "job_usecase - GetJobStatusWithResults")
 		return nil, entity.CreateError(entity.ErrNotFound.Error(), fmt.Sprintf("job not found: %s", name))
@@ -192,9 +210,9 @@ func (uc *JobUseCase) GetJobStatusWithResults(ctx context.Context, name string) 
 	}
 
 	// Extract job ID from job name
-	jobID := name
-	if strings.HasPrefix(name, "actsml-job-") {
-		jobID = strings.TrimPrefix(name, "actsml-job-")
+	jobID := jobName
+	if strings.HasPrefix(jobName, jobNamePrefix) {
+		jobID = strings.TrimPrefix(jobName, jobNamePrefix)
 	}
 
 	result := &intfaces.JobStatusWithResults{
@@ -206,30 +224,35 @@ func (uc *JobUseCase) GetJobStatusWithResults(ctx context.Context, name string) 
 	// If completed, fetch metrics from MinIO
 	if status == "completed" && uc.minio != nil {
 		// Get output path from ConfigMap
-		configMapName := fmt.Sprintf("%s-payload", name)
+		configMapSuffix := uc.getConfigMapSuffix()
+		payloadFileName := uc.getPayloadFileName()
+		configMapName := fmt.Sprintf("%s%s", jobName, configMapSuffix)
 		configMap, err := uc.k8s.GetConfigMap(ctx, namespace, configMapName)
 		if err == nil {
 			var payload ACTSMLTrainingPayload
-			payloadStr := configMap.Data["payload.json"]
+			payloadStr := configMap.Data[payloadFileName]
 			if err := json.Unmarshal([]byte(payloadStr), &payload); err == nil {
 				// Fetch actual metrics JSON from MinIO
-				metrics, err := uc.minio.GetMetrics(ctx, payload.Output.Bucket, payload.Output.Path)
+				metricsFileName := uc.getMetricsFileName()
+				modelFileName := uc.getModelFileName()
+				s3PathPrefix := uc.getS3PathPrefix()
+				metrics, err := uc.minio.GetMetrics(ctx, payload.Output.Bucket, payload.Output.Path, metricsFileName)
 				if err != nil {
-					uc.logger.Warn(fmt.Sprintf("Failed to fetch metrics for job %s: %v", name, err))
+					uc.logger.Warn(fmt.Sprintf("Failed to fetch metrics for job %s: %v", jobName, err))
 					// Continue without metrics - don't fail the request
 				} else {
 					// Return actual metrics data
 					result.Metrics = metrics
 					
 					// Return paths for artifacts
-					result.MetricsPath = fmt.Sprintf("s3://%s/%smetrics.json", payload.Output.Bucket, payload.Output.Path)
-					result.ModelPath = fmt.Sprintf("s3://%s/%smodel.pkl", payload.Output.Bucket, payload.Output.Path)
+					result.MetricsPath = fmt.Sprintf("%s%s/%s%s", s3PathPrefix, payload.Output.Bucket, payload.Output.Path, metricsFileName)
+					result.ModelPath = fmt.Sprintf("%s%s/%s%s", s3PathPrefix, payload.Output.Bucket, payload.Output.Path, modelFileName)
 				}
 			} else {
-				uc.logger.Warn(fmt.Sprintf("Failed to parse payload from ConfigMap for job %s: %v", name, err))
+				uc.logger.Warn(fmt.Sprintf("Failed to parse payload from ConfigMap for job %s: %v", jobName, err))
 			}
 		} else {
-			uc.logger.Warn(fmt.Sprintf("Failed to get ConfigMap for job %s: %v", name, err))
+			uc.logger.Warn(fmt.Sprintf("Failed to get ConfigMap for job %s: %v", jobName, err))
 		}
 	}
 
@@ -405,4 +428,221 @@ func (uc *JobUseCase) getTTLSeconds() int32 {
 	}
 	// Default fallback (1 hour)
 	return 3600
+}
+
+// getJobNamePrefix returns the job name prefix
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getJobNamePrefix() string {
+	if prefix := os.Getenv("JOB_NAME_PREFIX"); prefix != "" {
+		return prefix
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.JobNamePrefix != "" {
+		return uc.cfg.Job.JobConfig.JobNamePrefix
+	}
+	return "actsml-job-"
+}
+
+// getConfigMapSuffix returns the ConfigMap name suffix
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getConfigMapSuffix() string {
+	if suffix := os.Getenv("CONFIGMAP_SUFFIX"); suffix != "" {
+		return suffix
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.ConfigMapSuffix != "" {
+		return uc.cfg.Job.JobConfig.ConfigMapSuffix
+	}
+	return "-payload"
+}
+
+// getPayloadFileName returns the payload file name
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getPayloadFileName() string {
+	if fileName := os.Getenv("PAYLOAD_FILE_NAME"); fileName != "" {
+		return fileName
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.PayloadFileName != "" {
+		return uc.cfg.Job.JobConfig.PayloadFileName
+	}
+	return "payload.json"
+}
+
+// getWorkspaceMountPath returns the workspace mount path
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getWorkspaceMountPath() string {
+	if path := os.Getenv("WORKSPACE_MOUNT_PATH"); path != "" {
+		return path
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.WorkspaceMountPath != "" {
+		return uc.cfg.Job.JobConfig.WorkspaceMountPath
+	}
+	return "/workspace"
+}
+
+// getManagedByLabel returns the managed-by label value
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getManagedByLabel() string {
+	if label := os.Getenv("JOB_MANAGED_BY_LABEL"); label != "" {
+		return label
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.Labels.ManagedByLabel != "" {
+		return uc.cfg.Job.JobConfig.Labels.ManagedByLabel
+	}
+	return "actsml-orchestrator"
+}
+
+// getMetricsFileName returns the metrics file name
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getMetricsFileName() string {
+	if fileName := os.Getenv("METRICS_FILE_NAME"); fileName != "" {
+		return fileName
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.Artifacts.MetricsFileName != "" {
+		return uc.cfg.Job.JobConfig.Artifacts.MetricsFileName
+	}
+	return "metrics.json"
+}
+
+// getModelFileName returns the model file name
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getModelFileName() string {
+	if fileName := os.Getenv("MODEL_FILE_NAME"); fileName != "" {
+		return fileName
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.Artifacts.ModelFileName != "" {
+		return uc.cfg.Job.JobConfig.Artifacts.ModelFileName
+	}
+	return "model.pkl"
+}
+
+// getS3PathPrefix returns the S3 path prefix
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getS3PathPrefix() string {
+	if prefix := os.Getenv("S3_PATH_PREFIX"); prefix != "" {
+		return prefix
+	}
+	if uc.cfg != nil && uc.cfg.Job.JobConfig.Artifacts.S3PathPrefix != "" {
+		return uc.cfg.Job.JobConfig.Artifacts.S3PathPrefix
+	}
+	return "s3://"
+}
+
+// getJobBuilderConfig returns the job builder configuration
+func (uc *JobUseCase) getJobBuilderConfig() *JobBuilderConfig {
+	config := &JobBuilderConfig{}
+
+	// App label
+	if label := os.Getenv("JOB_APP_LABEL"); label != "" {
+		config.AppLabel = label
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Labels.AppLabel != "" {
+		config.AppLabel = uc.cfg.Job.JobConfig.Labels.AppLabel
+	} else {
+		config.AppLabel = "actsml-worker"
+	}
+
+	// Managed by label
+	if label := os.Getenv("JOB_MANAGED_BY_LABEL"); label != "" {
+		config.ManagedByLabel = label
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Labels.ManagedByLabel != "" {
+		config.ManagedByLabel = uc.cfg.Job.JobConfig.Labels.ManagedByLabel
+	} else {
+		config.ManagedByLabel = "actsml-orchestrator"
+	}
+
+	// Container name
+	if name := os.Getenv("CONTAINER_NAME"); name != "" {
+		config.ContainerName = name
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.ContainerName != "" {
+		config.ContainerName = uc.cfg.Job.JobConfig.ContainerName
+	} else {
+		config.ContainerName = "worker"
+	}
+
+	// Volume name
+	if name := os.Getenv("VOLUME_NAME"); name != "" {
+		config.VolumeName = name
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.VolumeName != "" {
+		config.VolumeName = uc.cfg.Job.JobConfig.VolumeName
+	} else {
+		config.VolumeName = "payload"
+	}
+
+	// Workspace mount path
+	if path := os.Getenv("WORKSPACE_MOUNT_PATH"); path != "" {
+		config.WorkspaceMountPath = path
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.WorkspaceMountPath != "" {
+		config.WorkspaceMountPath = uc.cfg.Job.JobConfig.WorkspaceMountPath
+	} else {
+		config.WorkspaceMountPath = "/workspace"
+	}
+
+	// Resource defaults
+	if cpuReq := os.Getenv("DEFAULT_CPU_REQUEST"); cpuReq != "" {
+		config.CPURequest = cpuReq
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Resources.CPURequest != "" {
+		config.CPURequest = uc.cfg.Job.JobConfig.Resources.CPURequest
+	} else {
+		config.CPURequest = "250m"
+	}
+
+	if cpuLimit := os.Getenv("DEFAULT_CPU_LIMIT"); cpuLimit != "" {
+		config.CPULimit = cpuLimit
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Resources.CPULimit != "" {
+		config.CPULimit = uc.cfg.Job.JobConfig.Resources.CPULimit
+	} else {
+		config.CPULimit = "1"
+	}
+
+	if memReq := os.Getenv("DEFAULT_MEMORY_REQUEST"); memReq != "" {
+		config.MemoryRequest = memReq
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Resources.MemoryRequest != "" {
+		config.MemoryRequest = uc.cfg.Job.JobConfig.Resources.MemoryRequest
+	} else {
+		config.MemoryRequest = "512Mi"
+	}
+
+	if memLimit := os.Getenv("DEFAULT_MEMORY_LIMIT"); memLimit != "" {
+		config.MemoryLimit = memLimit
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Resources.MemoryLimit != "" {
+		config.MemoryLimit = uc.cfg.Job.JobConfig.Resources.MemoryLimit
+	} else {
+		config.MemoryLimit = "1Gi"
+	}
+
+	// CPU multiplier
+	if multiplier := os.Getenv("CPU_MULTIPLIER"); multiplier != "" {
+		if _, err := fmt.Sscanf(multiplier, "%d", &config.CPUMultiplier); err != nil {
+			config.CPUMultiplier = 250
+		}
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Resources.CPUMultiplier > 0 {
+		config.CPUMultiplier = uc.cfg.Job.JobConfig.Resources.CPUMultiplier
+	} else {
+		config.CPUMultiplier = 250
+	}
+
+	// Kubernetes settings
+	if policy := os.Getenv("IMAGE_PULL_POLICY"); policy != "" {
+		config.ImagePullPolicy = policy
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Kubernetes.ImagePullPolicy != "" {
+		config.ImagePullPolicy = uc.cfg.Job.JobConfig.Kubernetes.ImagePullPolicy
+	} else {
+		config.ImagePullPolicy = "IfNotPresent"
+	}
+
+	if policy := os.Getenv("RESTART_POLICY"); policy != "" {
+		config.RestartPolicy = policy
+	} else if uc.cfg != nil && uc.cfg.Job.JobConfig.Kubernetes.RestartPolicy != "" {
+		config.RestartPolicy = uc.cfg.Job.JobConfig.Kubernetes.RestartPolicy
+	} else {
+		config.RestartPolicy = "Never"
+	}
+
+	if readOnly := os.Getenv("VOLUME_READ_ONLY"); readOnly != "" {
+		config.VolumeReadOnly = readOnly == "true"
+	} else if uc.cfg != nil {
+		config.VolumeReadOnly = uc.cfg.Job.JobConfig.Kubernetes.VolumeReadOnly
+	} else {
+		config.VolumeReadOnly = true
+	}
+
+	return config
 }

@@ -28,3 +28,42 @@ job:
     access_key: 'actsMl'
     secret_key: '6m35xip2UX50SpKh'
     secure: true
+  # Job configuration (naming, paths, labels, etc.)
+  job_config:
+    # Job name prefix (e.g., "actsml-job-{uuid}")
+    job_name_prefix: 'actsml-job-'
+    # ConfigMap name suffix (e.g., "{job-name}-payload")
+    configmap_suffix: '-payload'
+    # Payload file name in ConfigMap
+    payload_file_name: 'payload.json'
+    # Workspace mount path in worker container
+    workspace_mount_path: '/workspace'
+    # Volume name for ConfigMap
+    volume_name: 'payload'
+    # Container name in job pod
+    container_name: 'worker'
+    # Kubernetes labels
+    labels:
+      app_label: 'actsml-worker'
+      managed_by_label: 'actsml-orchestrator'
+    # Artifact file names and paths
+    artifacts:
+      metrics_file_name: 'metrics.json'
+      model_file_name: 'model.pkl'
+      s3_path_prefix: 's3://'
+    # Default resource values (used when compute config is not provided)
+    resources:
+      cpu_request: '250m'
+      cpu_limit: '1'
+      memory_request: '512Mi'
+      memory_limit: '1Gi'
+      # Millicores per CPU (used when converting NumCPUs to millicores)
+      cpu_multiplier: 250
+    # Kubernetes pod/container settings
+    kubernetes:
+      # Image pull policy: IfNotPresent, Always, Never
+      image_pull_policy: 'IfNotPresent'
+      # Restart policy: Never (default for Jobs), OnFailure, Always
+      restart_policy: 'Never'
+      # Whether ConfigMap volume mount is read-only
+      volume_read_only: true

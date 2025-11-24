@@ -2,7 +2,6 @@ package job_route
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -91,15 +90,9 @@ func (route *JobRoute) createJob(ctx *gin.Context) {
 func (route *JobRoute) getJobStatus(ctx *gin.Context) {
 	jobID := ctx.Param("id")
 	
-	// Convert job ID to full job name (actsml-job-{uuid})
-	// If the ID doesn't start with "actsml-job-", prepend it
-	jobName := jobID
-	if len(jobID) < 11 || jobID[:11] != "actsml-job-" {
-		jobName = fmt.Sprintf("actsml-job-%s", jobID)
-	}
-
-	// Get status with results (includes metrics if completed)
-	result, err := route.u.GetJobStatusWithResults(ctx.Request.Context(), jobName)
+	// Pass jobID to usecase - it will handle job name normalization internally
+	// The usecase will check if it's already a full job name or just an ID
+	result, err := route.u.GetJobStatusWithResults(ctx.Request.Context(), jobID)
 	if err != nil {
 		route.l.Error(err, "http - v1 - get job status")
 		ctx.JSON(entity.GetStatusCode(err), entity.ErrorCodeResponse(err))
