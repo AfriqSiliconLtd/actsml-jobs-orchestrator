@@ -12,5 +12,6 @@ type KubernetesClient interface {
 	DeleteJob(ctx context.Context, namespace, name string) error
 	GetJob(ctx context.Context, namespace, name string) (*batchv1.Job, error)
 	CreateConfigMap(ctx context.Context, namespace string, configMap *corev1.ConfigMap) (*corev1.ConfigMap, error)
+	GetConfigMap(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error)
 	DeleteConfigMap(ctx context.Context, namespace, name string) error
 }

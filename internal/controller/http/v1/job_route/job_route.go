@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/harmannkibue/actsml-jobs-orchestrator/internal/entity"
@@ -80,12 +79,12 @@ func (route *JobRoute) createJob(ctx *gin.Context) {
 }
 
 // @Summary     Get Job Status
-// @Description Get status of a Kubernetes training job
+// @Description Get status of a Kubernetes training job with metrics if completed
 // @ID          Get Job Status
 // @Tags        Job
 // @Produce     json
 // @Param       id path string true "Job ID (actsml-job-{uuid})"
-// @Success     200 {object} getJobStatusResponse
+// @Success     200 {object} intfaces.JobStatusWithResults
 // @Failure     404 {object} entity.HTTPError
 // @Failure     500 {object} entity.HTTPError
 // @Router      /jobs/{id}/status [get]
@@ -99,42 +98,13 @@ func (route *JobRoute) getJobStatus(ctx *gin.Context) {
 		jobName = fmt.Sprintf("actsml-job-%s", jobID)
 	}
 
-	jobObj, err := route.u.GetJobStatus(ctx.Request.Context(), jobName)
+	// Get status with results (includes metrics if completed)
+	result, err := route.u.GetJobStatusWithResults(ctx.Request.Context(), jobName)
 	if err != nil {
 		route.l.Error(err, "http - v1 - get job status")
 		ctx.JSON(entity.GetStatusCode(err), entity.ErrorCodeResponse(err))
 		return
 	}
 
-	// Determine status from job conditions
-	status := "unknown"
-	if len(jobObj.Status.Conditions) > 0 {
-		latestCondition := jobObj.Status.Conditions[len(jobObj.Status.Conditions)-1]
-		if latestCondition.Type == "Complete" && latestCondition.Status == "True" {
-			status = "completed"
-		} else if latestCondition.Type == "Failed" && latestCondition.Status == "True" {
-			status = "failed"
-		} else {
-			status = "running"
-		}
-	} else if jobObj.Status.Active > 0 {
-		status = "running"
-	} else if jobObj.Status.Succeeded > 0 {
-		status = "completed"
-	} else if jobObj.Status.Failed > 0 {
-		status = "failed"
-	}
-
-	// Extract job_id (UUID) from job name
-	// Job name format: actsml-job-{uuid}
-	actualJobID := jobID
-	if strings.HasPrefix(jobObj.Name, "actsml-job-") {
-		actualJobID = strings.TrimPrefix(jobObj.Name, "actsml-job-")
-	}
-
-	ctx.JSON(http.StatusOK, getJobStatusResponse{
-		JobID:        actualJobID,
-		Status:       status,
-		K8sConditions: jobObj.Status.Conditions,
-	})
+	ctx.JSON(http.StatusOK, result)
 }

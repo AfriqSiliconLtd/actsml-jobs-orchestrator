@@ -12,6 +12,7 @@ import (
 	"github.com/harmannkibue/actsml-jobs-orchestrator/config"
 	"github.com/harmannkibue/actsml-jobs-orchestrator/internal/entity"
 	"github.com/harmannkibue/actsml-jobs-orchestrator/internal/entity/intfaces"
+	"github.com/harmannkibue/actsml-jobs-orchestrator/internal/usecase/microservices"
 	"github.com/harmannkibue/actsml-jobs-orchestrator/pkg/logger"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -23,14 +24,16 @@ type JobUseCase struct {
 	cfg    *config.Config
 	logger logger.Interface
 	k8s    intfaces.KubernetesClient
+	minio  *microservices.MinIOClient
 }
 
 // NewJobUseCase creates a new instance of JobUseCase
-func NewJobUseCase(cfg *config.Config, l logger.Interface, k8s intfaces.KubernetesClient) *JobUseCase {
+func NewJobUseCase(cfg *config.Config, l logger.Interface, k8s intfaces.KubernetesClient, minio *microservices.MinIOClient) *JobUseCase {
 	return &JobUseCase{
 		cfg:    cfg,
 		logger: l,
 		k8s:    k8s,
+		minio:  minio,
 	}
 }
 
@@ -151,6 +154,83 @@ func (uc *JobUseCase) GetJobStatus(ctx context.Context, name string) (*batchv1.J
 	}
 
 	return job, nil
+}
+
+// GetJobStatusWithResults retrieves job status and metrics if completed
+func (uc *JobUseCase) GetJobStatusWithResults(ctx context.Context, name string) (*intfaces.JobStatusWithResults, error) {
+	if name == "" {
+		return nil, entity.CreateError(entity.ErrBadRequest.Error(), "job name cannot be empty")
+	}
+
+	namespace := uc.getNamespace()
+	job, err := uc.k8s.GetJob(ctx, namespace, name)
+	if err != nil {
+		uc.logger.Error(fmt.Errorf("failed to get job status: %w", err), "job_usecase - GetJobStatusWithResults")
+		return nil, entity.CreateError(entity.ErrNotFound.Error(), fmt.Sprintf("job not found: %s", name))
+	}
+
+	// Determine status from job conditions
+	status := "unknown"
+	if len(job.Status.Conditions) > 0 {
+		latestCondition := job.Status.Conditions[len(job.Status.Conditions)-1]
+		if latestCondition.Type == "Complete" && latestCondition.Status == "True" {
+			status = "completed"
+		} else if latestCondition.Type == "Failed" && latestCondition.Status == "True" {
+			status = "failed"
+		} else {
+			status = "running"
+		}
+	} else if job.Status.Active > 0 {
+		status = "running"
+	} else if job.Status.Succeeded > 0 {
+		status = "completed"
+	} else if job.Status.Failed > 0 {
+		status = "failed"
+	}
+
+	// Extract job ID from job name
+	jobID := name
+	if strings.HasPrefix(name, "actsml-job-") {
+		jobID = strings.TrimPrefix(name, "actsml-job-")
+	}
+
+	result := &intfaces.JobStatusWithResults{
+		JobID:         jobID,
+		Status:        status,
+		K8sConditions: job.Status.Conditions,
+	}
+
+	// If completed, fetch metrics from MinIO
+	if status == "completed" && uc.minio != nil {
+		// Get output path from ConfigMap
+		configMapName := fmt.Sprintf("%s-payload", name)
+		configMap, err := uc.k8s.GetConfigMap(ctx, namespace, configMapName)
+		if err == nil {
+			var payload ACTSMLTrainingPayload
+			payloadStr := configMap.Data["payload.json"]
+			if err := json.Unmarshal([]byte(payloadStr), &payload); err == nil {
+				// Fetch actual metrics JSON from MinIO
+				metrics, err := uc.minio.GetMetrics(ctx, payload.Output.Bucket, payload.Output.Path)
+				if err != nil {
+					uc.logger.Warn(fmt.Sprintf("Failed to fetch metrics for job %s: %v", name, err))
+					// Continue without metrics - don't fail the request
+				} else {
+					// Return actual metrics data
+					result.Metrics = metrics
+					
+					// Return paths for artifacts
+					result.MetricsPath = fmt.Sprintf("s3://%s/%smetrics.json", payload.Output.Bucket, payload.Output.Path)
+					result.ModelPath = fmt.Sprintf("s3://%s/%smodel.pkl", payload.Output.Bucket, payload.Output.Path)
+				}
+			} else {
+				uc.logger.Warn(fmt.Sprintf("Failed to parse payload from ConfigMap for job %s: %v", name, err))
+			}
+		} else {
+			uc.logger.Warn(fmt.Sprintf("Failed to get ConfigMap for job %s: %v", name, err))
+		}
+	}
+
+	return result, nil
 }
 
 // DeleteJob deletes a Kubernetes job

@@ -21,8 +21,19 @@ type CreateJobResult struct {
 	ExperimentID string    `json:"experiment_id,omitempty"`
 }
 
+// JobStatusWithResults represents job status with metrics data when completed
+type JobStatusWithResults struct {
+	JobID         string                 `json:"job_id"`
+	Status        string                 `json:"status"`
+	K8sConditions interface{}            `json:"k8s_conditions"`
+	Metrics       map[string]interface{} `json:"metrics,omitempty"`      // Actual metrics data (when completed)
+	MetricsPath   string                 `json:"metrics_path,omitempty"` // Path to metrics.json
+	ModelPath     string                 `json:"model_path,omitempty"`   // Path to model.pkl
+}
+
 type IntJobUsecase interface {
 	CreateJob(ctx context.Context, payload json.RawMessage) (*CreateJobResult, error)
 	GetJobStatus(ctx context.Context, name string) (*batchv1.Job, error)
+	GetJobStatusWithResults(ctx context.Context, name string) (*JobStatusWithResults, error)
 	DeleteJob(ctx context.Context, name string) error
 }

@@ -65,6 +65,10 @@ func (c *K8sClient) CreateConfigMap(ctx context.Context, namespace string, confi
 	return c.clientset.CoreV1().ConfigMaps(namespace).Create(ctx, configMap, metav1.CreateOptions{})
 }
 
+func (c *K8sClient) GetConfigMap(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error) {
+	return c.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
 func (c *K8sClient) DeleteConfigMap(ctx context.Context, namespace, name string) error {
 	return c.clientset.CoreV1().ConfigMaps(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }

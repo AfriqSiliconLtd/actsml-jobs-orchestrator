@@ -35,8 +35,15 @@ func Run(cfg *config.Config) {
 		l.Fatal(fmt.Errorf("failed to initialize Kubernetes client: %w", err))
 	}
 
+	// ---------- MINIO CLIENT ----------
+	minioClient, err := microservices.NewMinIOClient()
+	if err != nil {
+		l.Fatal(fmt.Errorf("failed to initialize MinIO client: %w", err))
+	}
+	l.Info("MinIO client initialized successfully")
+
 	// ---------- USE CASES ----------
-	jobUC := job_usecase.NewJobUseCase(cfg, l, k8sClient)
+	jobUC := job_usecase.NewJobUseCase(cfg, l, k8sClient, minioClient)
 
 	// ---------- DEPENDENCY CONTAINER ----------
 	deps := intfaces.Dependencies{
