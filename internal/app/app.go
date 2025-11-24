@@ -36,7 +36,7 @@ func Run(cfg *config.Config) {
 	}
 
 	// ---------- MINIO CLIENT ----------
-	minioClient, err := microservices.NewMinIOClient()
+	minioClient, err := microservices.NewMinIOClient(cfg)
 	if err != nil {
 		l.Fatal(fmt.Errorf("failed to initialize MinIO client: %w", err))
 	}

@@ -11,6 +11,7 @@ type (
 		App  `yaml:"app"`
 		HTTP `yaml:"http"`
 		Log  `yaml:"logger"`
+		Job  `yaml:"job"`
 	}
 
 	// App -.
@@ -28,6 +29,24 @@ type (
 	// Log -.
 	Log struct {
 		Level string `env-required:"true" yaml:"log_level"   env:"LOG_LEVEL"`
+	}
+
+	// Job -.
+	Job struct {
+		TTLSecondsAfterFinished int32  `yaml:"ttl_seconds_after_finished" env:"JOB_TTL_SECONDS"`
+		BackoffLimit            int32  `yaml:"backoff_limit" env:"JOB_BACKOFF_LIMIT"`
+		Namespace               string `yaml:"namespace" env:"K8S_NAMESPACE"`
+		WorkerImage             string `yaml:"worker_image" env:"WORKER_IMAGE"`
+		ImagePullSecretName     string `yaml:"image_pull_secret_name" env:"IMAGE_PULL_SECRET_NAME"`
+		MinIO                   MinIO  `yaml:"minio"`
+	}
+
+	// MinIO -.
+	MinIO struct {
+		Endpoint  string `yaml:"endpoint" env:"MINIO_ENDPOINT"`
+		AccessKey string `yaml:"access_key" env:"MINIO_ACCESS_KEY"`
+		SecretKey string `yaml:"secret_key" env:"MINIO_SECRET_KEY"`
+		Secure    bool   `yaml:"secure" env:"MINIO_SECURE"`
 	}
 )
 

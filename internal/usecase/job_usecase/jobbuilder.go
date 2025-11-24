@@ -10,7 +10,7 @@ import (
 )
 
 // BuildK8sJob builds a Kubernetes Job manifest with optional compute resources, image pull secrets, and ConfigMap volume
-func BuildK8sJob(jobName string, image string, envMap map[string]string, backoffLimit int32, namespace string, compute *ComputeConfig, imagePullSecretName string, configMapName string) *batchv1.Job {
+func BuildK8sJob(jobName string, image string, envMap map[string]string, backoffLimit int32, namespace string, compute *ComputeConfig, imagePullSecretName string, configMapName string, ttlSeconds int32) *batchv1.Job {
 	envVars := []corev1.EnvVar{}
 	for k, v := range envMap {
 		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
@@ -104,7 +104,6 @@ func BuildK8sJob(jobName string, image string, envMap map[string]string, backoff
 		},
 	}
 
-	ttl := int32(3600)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -114,7 +113,7 @@ func BuildK8sJob(jobName string, image string, envMap map[string]string, backoff
 		Spec: batchv1.JobSpec{
 			Template:                podTemplate,
 			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttl,
+			TTLSecondsAfterFinished: &ttlSeconds,
 		},
 	}
 

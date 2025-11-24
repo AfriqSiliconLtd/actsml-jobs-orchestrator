@@ -98,16 +98,19 @@ func (uc *JobUseCase) CreateJob(ctx context.Context, payload json.RawMessage) (*
 		"MINIO_SECURE":     uc.getMinIOSecure(),
 	}
 
-	// Get worker image from config or use default
+	// Get worker image from config
 	workerImage := uc.getWorkerImage()
 
-	// Get image pull secret name
+	// Get image pull secret name from config
 	imagePullSecretName := uc.getImagePullSecretName()
+
+	// Get job configuration from config
+	backoffLimit := uc.getBackoffLimit()
+	ttlSeconds := uc.getTTLSeconds()
 
 	// Build Kubernetes Job manifest with compute resources from payload
 	// Pass ConfigMap name for volume mounting
-	backoffLimit := int32(3)
-	job := BuildK8sJob(jobName, workerImage, envMap, backoffLimit, namespace, &validatedPayload.Compute, imagePullSecretName, configMapName)
+	job := BuildK8sJob(jobName, workerImage, envMap, backoffLimit, namespace, &validatedPayload.Compute, imagePullSecretName, configMapName, ttlSeconds)
 	
 	// Add project and experiment labels for better tracking
 	if job.Labels == nil {
@@ -251,24 +254,39 @@ func (uc *JobUseCase) DeleteJob(ctx context.Context, name string) error {
 }
 
 // getNamespace returns the namespace to use for jobs
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getNamespace() string {
-	// Can be overridden via environment variable or config
+	// Environment variable takes highest priority
 	if ns := os.Getenv("K8S_NAMESPACE"); ns != "" {
 		return ns
 	}
-	// Default to actsml namespace for ACTSML workspace
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.Namespace != "" {
+		return uc.cfg.Job.Namespace
+	}
+	// Default fallback
 	return "actsml"
 }
 
 // getWorkerImage returns the worker image to use
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getWorkerImage() string {
-	// Default worker image, can be overridden via config in the future
+	// Environment variable takes highest priority
+	if image := os.Getenv("WORKER_IMAGE"); image != "" {
+		return image
+	}
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.WorkerImage != "" {
+		return uc.cfg.Job.WorkerImage
+	}
+	// Default fallback
 	return "ghcr.io/afriqsiliconltd/actsml-worker-image:staging"
 }
 
 // getMinIOEndpoint returns the MinIO endpoint (with protocol)
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getMinIOEndpoint() string {
-	// Can be overridden via config or environment variable
+	// Environment variable takes highest priority
 	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
 		// Ensure protocol is included
 		if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
@@ -277,40 +295,114 @@ func (uc *JobUseCase) getMinIOEndpoint() string {
 		}
 		return endpoint
 	}
-	// Default to HTTPS endpoint for VPS
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.MinIO.Endpoint != "" {
+		endpoint := uc.cfg.Job.MinIO.Endpoint
+		// Ensure protocol is included
+		if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+			endpoint = "https://" + endpoint
+		}
+		return endpoint
+	}
+	// Default fallback
 	return "https://api.staging.minio.actsml.com"
 }
 
 // getMinIOAccessKey returns the MinIO access key
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getMinIOAccessKey() string {
+	// Environment variable takes highest priority
 	if key := os.Getenv("MINIO_ACCESS_KEY"); key != "" {
 		return key
 	}
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.MinIO.AccessKey != "" {
+		return uc.cfg.Job.MinIO.AccessKey
+	}
+	// Default fallback
 	return "actsMl"
 }
 
 // getMinIOSecretKey returns the MinIO secret key
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getMinIOSecretKey() string {
+	// Environment variable takes highest priority
 	if key := os.Getenv("MINIO_SECRET_KEY"); key != "" {
 		return key
 	}
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.MinIO.SecretKey != "" {
+		return uc.cfg.Job.MinIO.SecretKey
+	}
+	// Default fallback
 	return "6m35xip2UX50SpKh"
 }
 
 // getMinIOSecure returns whether MinIO uses secure connection
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getMinIOSecure() string {
+	// Environment variable takes highest priority
 	if secure := os.Getenv("MINIO_SECURE"); secure != "" {
 		return secure
 	}
-	return "true" // Default to true since VPS uses HTTPS
+	// Use config value if available
+	if uc.cfg != nil {
+		if uc.cfg.Job.MinIO.Secure {
+			return "true"
+		}
+		return "false"
+	}
+	// Default fallback
+	return "true"
 }
 
 // getImagePullSecretName returns the name of the image pull secret to use
+// Priority: Environment variable > Config > Default
 func (uc *JobUseCase) getImagePullSecretName() string {
-	// Can be overridden via environment variable
+	// Environment variable takes highest priority
 	if secretName := os.Getenv("IMAGE_PULL_SECRET_NAME"); secretName != "" {
 		return secretName
 	}
-	// Default to ghcr-pull-secret for GHCR authentication
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.ImagePullSecretName != "" {
+		return uc.cfg.Job.ImagePullSecretName
+	}
+	// Default fallback
 	return "ghcr-pull-secret"
+}
+
+// getBackoffLimit returns the backoff limit for job retries
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getBackoffLimit() int32 {
+	// Environment variable takes highest priority
+	if limit := os.Getenv("JOB_BACKOFF_LIMIT"); limit != "" {
+		var parsedLimit int32
+		if _, err := fmt.Sscanf(limit, "%d", &parsedLimit); err == nil {
+			return parsedLimit
+		}
+	}
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.BackoffLimit > 0 {
+		return uc.cfg.Job.BackoffLimit
+	}
+	// Default fallback
+	return 3
+}
+
+// getTTLSeconds returns the TTL in seconds for completed jobs
+// Priority: Environment variable > Config > Default
+func (uc *JobUseCase) getTTLSeconds() int32 {
+	// Environment variable takes highest priority
+	if ttl := os.Getenv("JOB_TTL_SECONDS"); ttl != "" {
+		var parsedTTL int32
+		if _, err := fmt.Sscanf(ttl, "%d", &parsedTTL); err == nil {
+			return parsedTTL
+		}
+	}
+	// Use config value if available
+	if uc.cfg != nil && uc.cfg.Job.TTLSecondsAfterFinished > 0 {
+		return uc.cfg.Job.TTLSecondsAfterFinished
+	}
+	// Default fallback (1 hour)
+	return 3600
 }

@@ -10,3 +10,21 @@ http:
 logger:
   log_level: 'debug'
   rollbar_env: 'go-clean-template'
+
+job:
+  # TTL in seconds for completed jobs (default: 3600 = 1 hour)
+  ttl_seconds_after_finished: 3600
+  # Maximum number of retries for failed jobs
+  backoff_limit: 3
+  # Kubernetes namespace for jobs
+  namespace: 'actsml'
+  # Worker container image
+  worker_image: 'ghcr.io/afriqsiliconltd/actsml-worker-image:staging'
+  # Image pull secret name for private registries
+  image_pull_secret_name: 'ghcr-pull-secret'
+  # MinIO configuration
+  minio:
+    endpoint: 'https://api.staging.minio.actsml.com'
+    access_key: 'actsMl'
+    secret_key: '6m35xip2UX50SpKh'
+    secure: true

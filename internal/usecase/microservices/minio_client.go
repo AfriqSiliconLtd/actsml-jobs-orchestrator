@@ -10,47 +10,72 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/harmannkibue/actsml-jobs-orchestrator/config"
 )
 
 type MinIOClient struct {
 	client *minio.Client
 }
 
-func NewMinIOClient() (*MinIOClient, error) {
-	endpoint := os.Getenv("MINIO_ENDPOINT")
-	if endpoint == "" {
+func NewMinIOClient(cfg *config.Config) (*MinIOClient, error) {
+	var endpoint, accessKey, secretKey string
+	var useSSL bool
+
+	// Priority: Environment variable > Config > Default
+	if envEndpoint := os.Getenv("MINIO_ENDPOINT"); envEndpoint != "" {
+		endpoint = envEndpoint
+	} else if cfg != nil && cfg.Job.MinIO.Endpoint != "" {
+		endpoint = cfg.Job.MinIO.Endpoint
+	} else {
 		endpoint = "https://api.staging.minio.actsml.com"
 	}
-	
-	// Remove protocol prefix
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-	
-	accessKey := os.Getenv("MINIO_ACCESS_KEY")
-	if accessKey == "" {
+
+	// Remove protocol prefix for MinIO client (it expects hostname only)
+	endpointHost := strings.TrimPrefix(endpoint, "https://")
+	endpointHost = strings.TrimPrefix(endpointHost, "http://")
+
+	// Determine SSL from endpoint or config
+	if strings.HasPrefix(endpoint, "https://") {
+		useSSL = true
+	} else if strings.HasPrefix(endpoint, "http://") {
+		useSSL = false
+	} else {
+		// Check environment variable
+		if envSecure := os.Getenv("MINIO_SECURE"); envSecure != "" {
+			useSSL = envSecure != "false"
+		} else if cfg != nil {
+			useSSL = cfg.Job.MinIO.Secure
+		} else {
+			useSSL = true // Default to secure
+		}
+	}
+
+	// Access key priority: Environment > Config > Default
+	if envKey := os.Getenv("MINIO_ACCESS_KEY"); envKey != "" {
+		accessKey = envKey
+	} else if cfg != nil && cfg.Job.MinIO.AccessKey != "" {
+		accessKey = cfg.Job.MinIO.AccessKey
+	} else {
 		accessKey = "actsMl"
 	}
-	
-	secretKey := os.Getenv("MINIO_SECRET_KEY")
-	if secretKey == "" {
+
+	// Secret key priority: Environment > Config > Default
+	if envSecret := os.Getenv("MINIO_SECRET_KEY"); envSecret != "" {
+		secretKey = envSecret
+	} else if cfg != nil && cfg.Job.MinIO.SecretKey != "" {
+		secretKey = cfg.Job.MinIO.SecretKey
+	} else {
 		secretKey = "6m35xip2UX50SpKh"
 	}
-	
-	useSSL := os.Getenv("MINIO_SECURE") != "false"
-	if os.Getenv("MINIO_ENDPOINT") != "" {
-		// Check if endpoint has https:// prefix
-		originalEndpoint := os.Getenv("MINIO_ENDPOINT")
-		useSSL = strings.HasPrefix(originalEndpoint, "https://")
-	}
-	
-	client, err := minio.New(endpoint, &minio.Options{
+
+	client, err := minio.New(endpointHost, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: useSSL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MinIO client: %w", err)
 	}
-	
+
 	return &MinIOClient{
 		client: client,
 	}, nil
