@@ -6,6 +6,9 @@ FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+# Set GOTOOLCHAIN to auto to allow downloading required Go version
+ENV GOTOOLCHAIN=auto
+
 WORKDIR /app
 RUN apk add --no-cache git
 
