@@ -132,8 +132,11 @@ func (p *PrometheusClient) GetPodResourceUsage(ctx context.Context, namespace, p
 
 // queryCPUUsage queries Prometheus for CPU usage of a pod
 func (p *PrometheusClient) queryCPUUsage(ctx context.Context, namespace, podName string) (float64, error) {
-	// Query: rate(container_cpu_usage_seconds_total{pod=~"pod-name.*", namespace="namespace"}[5m])
+	// Query: Try to get the latest CPU usage rate
+	// For running pods: use rate over 5m window
+	// For completed pods: use last_over_time to get the last known rate value
 	// We use pod=~ to match the pod name pattern since Kubernetes pod names can have suffixes
+	// First try with rate (for running pods), if that fails, try with last_over_time for completed pods
 	query := fmt.Sprintf(`sum(rate(container_cpu_usage_seconds_total{pod=~"%s.*", namespace="%s"}[5m]))`, podName, namespace)
 	
 	result, err := p.executeQuery(ctx, query)
@@ -141,8 +144,16 @@ func (p *PrometheusClient) queryCPUUsage(ctx context.Context, namespace, podName
 		return 0, err
 	}
 
+	// If no results with rate query (pod might be completed), try last_over_time to get historical data
 	if len(result.Data.Result) == 0 {
-		return 0, fmt.Errorf("no CPU metrics found for pod %s in namespace %s", podName, namespace)
+		// Try to get the last known rate value from the last hour
+		fallbackQuery := fmt.Sprintf(`sum(last_over_time(rate(container_cpu_usage_seconds_total{pod=~"%s.*", namespace="%s"}[5m])[1h:]))`, podName, namespace)
+		fallbackResult, fallbackErr := p.executeQuery(ctx, fallbackQuery)
+		if fallbackErr == nil && len(fallbackResult.Data.Result) > 0 {
+			result = fallbackResult
+		} else {
+			return 0, fmt.Errorf("no CPU metrics found for pod %s in namespace %s", podName, namespace)
+		}
 	}
 
 	// Extract the value (Prometheus returns [timestamp, value])
@@ -162,6 +173,7 @@ func (p *PrometheusClient) queryCPUUsage(ctx context.Context, namespace, podName
 // queryMemoryUsage queries Prometheus for memory usage of a pod
 func (p *PrometheusClient) queryMemoryUsage(ctx context.Context, namespace, podName string) (int64, error) {
 	// Query: container_memory_working_set_bytes{pod=~"pod-name.*", namespace="namespace"}
+	// For completed pods, use last_over_time to get the last known value
 	query := fmt.Sprintf(`sum(container_memory_working_set_bytes{pod=~"%s.*", namespace="%s"})`, podName, namespace)
 	
 	result, err := p.executeQuery(ctx, query)
@@ -169,8 +181,16 @@ func (p *PrometheusClient) queryMemoryUsage(ctx context.Context, namespace, podN
 		return 0, err
 	}
 
+	// If no results (pod might be completed), try last_over_time to get historical data
 	if len(result.Data.Result) == 0 {
-		return 0, fmt.Errorf("no memory metrics found for pod %s in namespace %s", podName, namespace)
+		// Try to get the last known memory value from the last hour
+		fallbackQuery := fmt.Sprintf(`sum(last_over_time(container_memory_working_set_bytes{pod=~"%s.*", namespace="%s"}[1h:]))`, podName, namespace)
+		fallbackResult, fallbackErr := p.executeQuery(ctx, fallbackQuery)
+		if fallbackErr == nil && len(fallbackResult.Data.Result) > 0 {
+			result = fallbackResult
+		} else {
+			return 0, fmt.Errorf("no memory metrics found for pod %s in namespace %s", podName, namespace)
+		}
 	}
 
 	// Extract the value (Prometheus returns [timestamp, value])
