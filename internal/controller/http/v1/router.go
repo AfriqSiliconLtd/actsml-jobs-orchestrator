@@ -43,7 +43,7 @@ func NewRouter(handler *gin.Engine, l logger.Interface, u intfaces.Dependencies)
 
 	// K8s probe for kubernetes health checks -.
 	handler.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "The server is up and running.Hurray Blog")
+		c.JSON(http.StatusOK, "The server is up and running awesome ACTSML Golang Orchestrator")
 	})
 
 	// Handling a page not found endpoint -.

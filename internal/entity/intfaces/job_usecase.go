@@ -21,6 +21,14 @@ type CreateJobResult struct {
 	ExperimentID string    `json:"experiment_id,omitempty"`
 }
 
+// ResourceUsage represents CPU and memory usage for a pod
+type ResourceUsage struct {
+	CPUUsageCores    float64 `json:"cpu_usage_cores"`    // CPU usage in cores
+	MemoryUsageBytes int64   `json:"memory_usage_bytes"`  // Memory usage in bytes
+	MemoryUsageMB    float64 `json:"memory_usage_mb"`    // Memory usage in MB (for convenience)
+	Timestamp        string  `json:"timestamp"`          // When the metrics were collected
+}
+
 // JobStatusWithResults represents job status with metrics data when completed
 type JobStatusWithResults struct {
 	JobID         string                 `json:"job_id"`
@@ -29,6 +37,7 @@ type JobStatusWithResults struct {
 	Metrics       map[string]interface{} `json:"metrics,omitempty"`      // Actual metrics data (when completed)
 	MetricsPath   string                 `json:"metrics_path,omitempty"` // Path to metrics.json
 	ModelPath     string                 `json:"model_path,omitempty"`   // Path to model.pkl
+	ResourceUsage *ResourceUsage         `json:"resource_usage,omitempty"` // Resource usage from Prometheus (when running or completed)
 }
 
 type IntJobUsecase interface {

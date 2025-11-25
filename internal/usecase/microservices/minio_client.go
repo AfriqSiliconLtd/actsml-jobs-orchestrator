@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/harmannkibue/actsml-jobs-orchestrator/config"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/harmannkibue/actsml-jobs-orchestrator/config"
 )
 
 type MinIOClient struct {
@@ -84,23 +84,22 @@ func NewMinIOClient(cfg *config.Config) (*MinIOClient, error) {
 // GetMetrics fetches the metrics file from MinIO and returns it as a map
 func (m *MinIOClient) GetMetrics(ctx context.Context, bucket, path, metricsFileName string) (map[string]interface{}, error) {
 	objectPath := fmt.Sprintf("%s%s", path, metricsFileName)
-	
+
 	obj, err := m.client.GetObject(ctx, bucket, objectPath, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metrics object from MinIO: %w", err)
 	}
 	defer obj.Close()
-	
+
 	data, err := io.ReadAll(obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read metrics data: %w", err)
 	}
-	
+
 	var metrics map[string]interface{}
 	if err := json.Unmarshal(data, &metrics); err != nil {
 		return nil, fmt.Errorf("failed to parse metrics JSON: %w", err)
 	}
-	
+
 	return metrics, nil
 }
-

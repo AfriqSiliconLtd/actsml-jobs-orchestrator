@@ -11,19 +11,19 @@ import (
 
 // JobBuilderConfig holds configuration values for building Kubernetes jobs
 type JobBuilderConfig struct {
-	AppLabel         string
-	ManagedByLabel   string
-	ContainerName    string
-	VolumeName       string
+	AppLabel           string
+	ManagedByLabel     string
+	ContainerName      string
+	VolumeName         string
 	WorkspaceMountPath string
-	CPURequest       string
-	CPULimit         string
-	MemoryRequest    string
-	MemoryLimit      string
-	CPUMultiplier    int
-	ImagePullPolicy  string
-	RestartPolicy    string
-	VolumeReadOnly   bool
+	CPURequest         string
+	CPULimit           string
+	MemoryRequest      string
+	MemoryLimit        string
+	CPUMultiplier      int
+	ImagePullPolicy    string
+	RestartPolicy      string
+	VolumeReadOnly     bool
 }
 
 // BuildK8sJob builds a Kubernetes Job manifest with optional compute resources, image pull secrets, and ConfigMap volume
@@ -51,7 +51,7 @@ func BuildK8sJob(jobName string, image string, envMap map[string]string, backoff
 		"managed-by": managedByLabel,
 	}
 
-	// Default resource values from config
+	// Default resource values from config -.
 	cpuRequest := "250m"
 	cpuLimit := "1"
 	memoryRequest := "512Mi"
@@ -75,7 +75,7 @@ func BuildK8sJob(jobName string, image string, envMap map[string]string, backoff
 		}
 	}
 
-	// Override with compute config if provided
+	// Override with compute config if provided -.
 	if compute != nil {
 		if compute.NumCPUs > 0 {
 			cpuRequest = fmt.Sprintf("%dm", compute.NumCPUs*cpuMultiplier)
@@ -88,7 +88,7 @@ func BuildK8sJob(jobName string, image string, envMap map[string]string, backoff
 		}
 	}
 
-	// Configure volume mount for payload file if ConfigMap is provided
+	// Configure volume mount for payload file if ConfigMap is provided -.
 	var volumeMounts []corev1.VolumeMount
 	var volumes []corev1.Volume
 	volumeName := "payload"
@@ -191,10 +191,10 @@ func BuildK8sJob(jobName string, image string, envMap map[string]string, backoff
 			Labels: labels,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy:      restartPolicy,
-			Containers:         []corev1.Container{container},
-			ImagePullSecrets:   imagePullSecrets,
-			Volumes:            volumes,
+			RestartPolicy:    restartPolicy,
+			Containers:       []corev1.Container{container},
+			ImagePullSecrets: imagePullSecrets,
+			Volumes:          volumes,
 		},
 	}
 

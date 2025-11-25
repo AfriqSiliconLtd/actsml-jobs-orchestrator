@@ -89,7 +89,7 @@ func (route *JobRoute) createJob(ctx *gin.Context) {
 // @Router      /jobs/{id}/status [get]
 func (route *JobRoute) getJobStatus(ctx *gin.Context) {
 	jobID := ctx.Param("id")
-	
+
 	// Pass jobID to usecase - it will handle job name normalization internally
 	// The usecase will check if it's already a full job name or just an ID
 	result, err := route.u.GetJobStatusWithResults(ctx.Request.Context(), jobID)

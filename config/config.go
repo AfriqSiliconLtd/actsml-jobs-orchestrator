@@ -39,6 +39,7 @@ type (
 		WorkerImage             string `yaml:"worker_image" env:"WORKER_IMAGE"`
 		ImagePullSecretName     string `yaml:"image_pull_secret_name" env:"IMAGE_PULL_SECRET_NAME"`
 		MinIO                   MinIO  `yaml:"minio"`
+		Prometheus              Prometheus `yaml:"prometheus"`
 		JobConfig               JobConfig `yaml:"job_config"`
 	}
 
@@ -91,6 +92,12 @@ type (
 		AccessKey string `yaml:"access_key" env:"MINIO_ACCESS_KEY"`
 		SecretKey string `yaml:"secret_key" env:"MINIO_SECRET_KEY"`
 		Secure    bool   `yaml:"secure" env:"MINIO_SECURE"`
+	}
+
+	// Prometheus -.
+	Prometheus struct {
+		Endpoint string `yaml:"endpoint" env:"PROMETHEUS_ENDPOINT"`
+		Enabled  bool   `yaml:"enabled" env:"PROMETHEUS_ENABLED"`
 	}
 )
 

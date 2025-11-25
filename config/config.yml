@@ -28,6 +28,10 @@ job:
     access_key: 'actsMl'
     secret_key: '6m35xip2UX50SpKh'
     secure: true
+  # Prometheus configuration
+  prometheus:
+    endpoint: 'http://prometheus.monitoring.svc.cluster.local:9090'
+    enabled: true
   # Job configuration (naming, paths, labels, etc.)
   job_config:
     # Job name prefix (e.g., "actsml-job-{uuid}")

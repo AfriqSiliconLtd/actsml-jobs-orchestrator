@@ -42,8 +42,19 @@ func Run(cfg *config.Config) {
 	}
 	l.Info("MinIO client initialized successfully")
 
+	// ---------- PROMETHEUS CLIENT ----------
+	prometheusClient, err := microservices.NewPrometheusClient(cfg)
+	if err != nil {
+		l.Fatal(fmt.Errorf("failed to initialize Prometheus client: %w", err))
+	}
+	if prometheusClient.IsEnabled() {
+		l.Info("Prometheus client initialized successfully")
+	} else {
+		l.Info("Prometheus client is disabled")
+	}
+
 	// ---------- USE CASES ----------
-	jobUC := job_usecase.NewJobUseCase(cfg, l, k8sClient, minioClient)
+	jobUC := job_usecase.NewJobUseCase(cfg, l, k8sClient, minioClient, prometheusClient)
 
 	// ---------- DEPENDENCY CONTAINER ----------
 	deps := intfaces.Dependencies{

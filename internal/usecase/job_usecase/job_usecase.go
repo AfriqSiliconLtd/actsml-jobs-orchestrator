@@ -21,19 +21,21 @@ import (
 
 // JobUseCase represents the job usecase with its dependencies
 type JobUseCase struct {
-	cfg    *config.Config
-	logger logger.Interface
-	k8s    intfaces.KubernetesClient
-	minio  *microservices.MinIOClient
+	cfg       *config.Config
+	logger    logger.Interface
+	k8s       intfaces.KubernetesClient
+	minio     *microservices.MinIOClient
+	prometheus *microservices.PrometheusClient
 }
 
 // NewJobUseCase creates a new instance of JobUseCase
-func NewJobUseCase(cfg *config.Config, l logger.Interface, k8s intfaces.KubernetesClient, minio *microservices.MinIOClient) *JobUseCase {
+func NewJobUseCase(cfg *config.Config, l logger.Interface, k8s intfaces.KubernetesClient, minio *microservices.MinIOClient, prometheus *microservices.PrometheusClient) *JobUseCase {
 	return &JobUseCase{
-		cfg:    cfg,
-		logger: l,
-		k8s:    k8s,
-		minio:  minio,
+		cfg:       cfg,
+		logger:    l,
+		k8s:       k8s,
+		minio:     minio,
+		prometheus: prometheus,
 	}
 }
 
@@ -221,7 +223,27 @@ func (uc *JobUseCase) GetJobStatusWithResults(ctx context.Context, name string) 
 		K8sConditions: job.Status.Conditions,
 	}
 
-	// If completed, fetch metrics from MinIO
+	// Fetch Prometheus resource usage for running or completed jobs
+	if (status == "running" || status == "completed") && uc.prometheus != nil && uc.prometheus.IsEnabled() {
+		// Create a context with timeout for Prometheus query to prevent hanging
+		promCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		
+		resourceUsage, err := uc.prometheus.GetPodResourceUsage(promCtx, namespace, jobName)
+		if err != nil {
+			uc.logger.Warn(fmt.Sprintf("Failed to fetch resource usage for job %s: %v", jobName, err))
+			// Continue without resource usage - don't fail the request
+		} else {
+			result.ResourceUsage = &intfaces.ResourceUsage{
+				CPUUsageCores:    resourceUsage.CPUUsageCores,
+				MemoryUsageBytes: resourceUsage.MemoryUsageBytes,
+				MemoryUsageMB:    resourceUsage.MemoryUsageMB,
+				Timestamp:        resourceUsage.Timestamp,
+			}
+		}
+	}
+
+	// If completed, fetch metrics from MinIO (metrics.json content)
 	if status == "completed" && uc.minio != nil {
 		// Get output path from ConfigMap
 		configMapSuffix := uc.getConfigMapSuffix()
